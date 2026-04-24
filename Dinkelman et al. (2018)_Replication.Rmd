@@ -1,0 +1,290 @@
+---
+title: "**Evaluation of Labor Policy**"
+subtitle: "Difference-in-Differences"
+author: "Henri Bui"
+date: 15th March 2026 
+output: html_document
+# html_document: 
+#   theme: sandstone
+#   highlight: tango
+# pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(fixest)
+library(ggplot2)
+
+# free the working memory
+rm(list = ls())
+
+# set working directory 
+setwd(here::here())
+
+# set seed 
+set.seed(1234)
+
+# import the data in an object called 'data'
+data <- read.csv("data2-1.csv")
+```
+
+<br>
+
+## 1. Descriptive evidence
+
+**a. Create a categorical variable `treatment_group` for the cohorts in the data**
+<br>
+```{r new variable treatment_group, include=TRUE}
+
+data <- data %>%
+  mutate(
+    treatment_group = case_when(
+      agegrp >= 45 ~ 1,   # pre-treatment cohorts ages 45+
+      agegrp >= 35 ~ 2,   # early treated cohorts ages 35-44
+      agegrp >= 25 ~ 3,   # late treated cohorts ages 25-34
+      agegrp >= 20 ~ 4    # post-treatment cohort ages 20-24
+    )
+  )
+
+```
+
+
+<br>
+
+**b. Produce bar plots of mean `education` and mean `primary` by `treatment_group`**
+<br>
+```{r bar plots, include=TRUE}
+
+means <- data %>%
+  group_by(treatment_group) %>%
+  summarise(
+    mean_education = mean(education, na.rm = TRUE),
+    mean_primary = mean(primary, na.rm = TRUE)
+  )
+
+#average years of schooling attained
+
+plot1 <- ggplot(means, aes(x = factor(treatment_group), y = mean_education)) +
+  geom_col() +
+  labs(
+    x = "Treatment group",
+    y = "Average years of schooling attained",
+    title = "Average years of schooling by treatment group"
+  )
+
+
+plot1
+
+```
+
+
+```{r}
+#share of adults with any primary schooling
+
+plot2 <-ggplot(means, aes(x = factor(treatment_group), y = mean_primary)) +
+  geom_col() +
+  labs(
+    x = "Treatment group",
+    y = "Share of adults with any primary schooling",
+    title = "Primary schooling share by treatment group"
+  )
+
+plot2
+```
+
+We can see that there exists a clear difference across all treatment groups. For both bar plots we can see that the education, be it average years of schooling or the share of primary schooling, increases as the cohorts become younger. We can see that the means for post treatment cohorts ages 20-24 is much higher compared to the means of pre-treatment cohorts ages 45+. This suggests that younger cohorts have had more education than older cohorts.
+<br>
+
+## 2. Validity checks
+
+**a. Means tables (for `education` and `primary`) using pre-treatment and late-treated cohorts**
+<br>
+```{r}
+data <- data %>%
+  mutate(any_wenela = ifelse(n_wenela > 0, 1, 0))
+
+validity_data <- data %>%
+  filter(treatment_group %in% c(1, 3))
+```
+
+
+```{r means tables, include=TRUE}
+
+#Table 1: Mean of average years of schooling attained variable by groups
+
+edu_table <- validity_data %>%
+  group_by(treatment_group, any_wenela) %>%
+  summarise(mean_education = mean(education, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    cohort = case_when(
+      treatment_group == 1 ~ "Pretreatment cohorts",
+      treatment_group == 3 ~ "Late treatment cohorts"
+    ),
+    wenela = case_when(
+      any_wenela == 0 ~ "No",
+      any_wenela == 1 ~ "Yes"
+    )
+  ) %>%
+  select(cohort, wenela, mean_education) %>%
+  pivot_wider(names_from = wenela, values_from = mean_education) %>%
+  mutate(Diff = Yes - No)
+
+# --- Add column p-values (code generate with Chatgpt)
+p_pre <- t.test(education ~ any_wenela,
+                data = filter(validity_data, treatment_group == 1))$p.value
+
+p_late <- t.test(education ~ any_wenela,
+                 data = filter(validity_data, treatment_group == 3))$p.value
+
+edu_table <- edu_table %>%
+  mutate(p_value = c(p_pre, p_late))
+
+
+# Add bottom "Diff." row
+edu_table <- bind_rows(
+  edu_table,
+  tibble(
+    cohort = "Diff.",
+    No = edu_table$No[edu_table$cohort == "Late treatment cohorts"] -
+         edu_table$No[edu_table$cohort == "Pretreatment cohorts"],
+    Yes = edu_table$Yes[edu_table$cohort == "Late treatment cohorts"] -
+          edu_table$Yes[edu_table$cohort == "Pretreatment cohorts"],
+    Diff = NA_real_
+  )
+)
+
+edu_table
+
+```
+
+
+```{r}
+#Table 2: Mean of share of adults with any primary schooling variable by groups
+
+prim_table <- validity_data %>%
+  group_by(treatment_group, any_wenela) %>%
+  summarise(mean_primary = mean(primary, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    cohort = case_when(
+      treatment_group == 1 ~ "Pretreatment cohorts",
+      treatment_group == 3 ~ "Late treatment cohorts"
+    ),
+    wenela = case_when(
+      any_wenela == 0 ~ "No",
+      any_wenela == 1 ~ "Yes"
+    )
+  ) %>%
+  select(cohort, wenela, mean_primary) %>%
+  pivot_wider(names_from = wenela, values_from = mean_primary) %>%
+  mutate(Diff = Yes - No)
+
+# --- Add column p-values (code generate with Chatgpt)
+
+p_pre <- t.test(primary ~ any_wenela,
+                data = filter(validity_data, treatment_group == 1))$p.value
+
+p_late <- t.test(primary ~ any_wenela,
+                 data = filter(validity_data, treatment_group == 3))$p.value
+
+prim_table <- prim_table %>%
+  mutate(p_value = c(p_pre, p_late))
+
+# Add bottom "Diff." row
+prim_table <- bind_rows(
+  prim_table,
+  tibble(
+    cohort = "Diff.",
+    No = prim_table$No[prim_table$cohort == "Late treatment cohorts"] -
+         prim_table$No[prim_table$cohort == "Pretreatment cohorts"],
+    Yes = prim_table$Yes[prim_table$cohort == "Late treatment cohorts"] -
+          prim_table$Yes[prim_table$cohort == "Pretreatment cohorts"],
+    Diff = NA_real_
+  )
+)
+
+prim_table
+```
+
+The tables reveal distinct differences in education levels between districts with and without Wenela stations across both cohort groups. For average years of schooling, the pretreatment cohorts show a mean of 0.38 years in non-Wenela districts and 0.53 years in Wenela districts, a difference of 0.15 years that is statistically significant at the 1% level (p = 0.008). Among the late treatment cohorts, this gap widens substantially to 0.81 years (2.16 against 2.97), also significant at the 1% level (p < 0.001). Looking at the column differences, both types of districts see large increases in education across cohorts, 1.78 years for non-Wenela and 2.44 years for Wenela, but the increase is larger in Wenela districts.
+
+It is similar for the share of adults with any primary schooling. The pretreatment cohorts show a gap of 3.75 percentage points between non-Wenela with 11.7% and Wenela with 15.5% districts, significant at the 5% level (p = 0.025). For the late treatment cohorts, this gap grows to 9.27 percentage points (36.1% against 45.4%), significant at the 1% level (p < 0.001). As the average years of schooling, both groups improve over time (24.4 and 29.9 percentage points respectively), but the improvement is larger in Wenela districts.
+
+These patterns suggest that the gap between Wenela and non-Wenela districts grew considerably for cohorts exposed to the migration shock, which mean a positive effect of migration on education. However, these comparisons cannot be interpreted causally, as other confounding factors may drive the differences.
+
+<br>
+
+**b. Compare pre-treatment vs late-treated cohorts in districts with Wenela stations**
+<br>
+
+We can see that for districts that had a Wenela station, the late treatment cohort has a higher education outcome than the the pre treatment cohort, for both variables. Average years of schooling grow from 0.53 to 2.97 years, and the share of adults with any primary schooling increased from 15.5% to 45.4%. This suggests that within districs with a Wenela station, the younger cohorts have had more education than the older cohorts, both average years of schooling as well as the share who has had primary schooling. But, these results cannot be interpreted causally, that is they are not causal evidence of the effect of migration. This is because the comparison also includes effects other than migration. For example, younger cohorts might have higher education because over time, the education system in the home country expanded over time, independent of migration. Thus, we cannot definitively say that this effect is due to migration. Hence, results cannot be interpreted causally. 
+
+<br>
+
+**c. Compare districts with vs without Wenela stations among late-treated cohorts**
+<br>
+
+Only focussing on late treatment cohorts, we can see that the education outcomes for both variables is higher in districts where there exists a Wenela station. Average years of schooling is 2.97 in Wenela districts compared to 2.16 in non-Wenela districts, and the share of adults with any primary schooling is 45.4% in Wenela districts compared to 36.1% in non-Wenela districts. Thus suggests that people living in districts with a Wenela station have better/higher education outcomes for both average years of schooling as well as the share who has had primary schooling. However, once again, these results cannot be interpreted causally, that is they are not causal evidence of the effect of migration. Once again, there might exists other effects which contribute to a higher level of education. For example, education spending, infrastructure, etc. may be higher in districts who have a Wenela station. Hence, the postive education outcomes cannot be causally attributed to the Wenela stations, and hence migration.
+
+<br>
+
+**d. Main threats to identification**
+<br>
+
+The main threats to identification of the causal effect of migration in this example is selcection bias, meaning that the districts that have a Wenela station, and those that don't have a Wenela station might differ systematically. As mentioned above, districts who have a Wenela station may have better infrastructre or education spending, more schools, compared to districts without a Wenela station. If this is the case, then the observed differences in education and schooling are not soley the result of migration but also other effects, such as those just mentioned. More education budget, means higher spending on education, which can affect both the quantity and quality of education. In that case, this would be unrelated to migration effects. 
+
+Another threat to causal identification could be a violation of the parallel trends assumption, meaning that the districts with and without a Wenela station develop differently when it comes to education across the cohorts, that is, independent of education. If this is the case, then it becomes hard to differentiate between migration effects and general trends over time.
+
+Moreover we can also add Spillover effects, If migration brought money into Wenela districts, that economic activity could have benefited nearby non-Wenela districts too, through trade for example. This would mean the control group isn't truly unaffected, which would bias the DiD estimate downward.
+
+Lastly, measurement errors in age reporting could potentially bring a threat. In low-literacy populations such as Malawi's, people may misreport their age in the census, which could lead to individuals being assigned to the wrong treatment cohort. This would complicate the distinction between treated and untreated groups, potentially biasing the estimated effects of migration on education.
+
+<br>
+
+## 3. Causal effect estimation
+
+**a. Estimate the simple DiD model (pre-treatment and late-treated cohorts only)**
+
+```{r simple did model, echo=TRUE}
+
+did_data <- data %>%
+  filter(treatment_group %in% c(1, 3)) %>%
+  mutate(
+    LateTreated = ifelse(treatment_group == 3, 1, 0),
+    AnyWenela = ifelse(n_wenela > 0, 1, 0)
+  )
+
+did_edu <- lm(education ~ LateTreated + AnyWenela + LateTreated:AnyWenela, data = did_data)
+summary(did_edu)
+
+```
+
+<br>
+```{r}
+did_prim <- lm(primary ~ LateTreated + AnyWenela + LateTreated:AnyWenela, data = did_data)
+summary(did_prim)
+```
+
+<br>
+**b. What is the interpretation of each coefficient? What can you conclude? **
+<br>
+We interpret the meanining of each coefficient for each variable: 
+<br>
+$\alpha_0$: This is the intercept, meaning that it is the average outcome for the control group, that is the pre treatment cohorts in districts that don't have a Wenela station, i.e. the baseline level of education. That is 0.376 for average years of schooling, and 0.117 for the share of adults with primary schooling. 
+<br>
+$\alpha_1$: This is our main interest of our DiD regression and it represents the difference in education from pre treament to late treatment cohorts between districts with and districts without a Wenela station. That is, this coefficient represents the estimated causal effect of migration. For average years of schooling, the coefficient is 0.662, while for the share of adults with primary schooling the coefficient is 0.055. So, for both variblee the increase in education from pre treatment to late treatment cohorts is larger in districts that have a Wenela station than in districts that don't have a Wenela station. However, the only the coefficient for average years of schooling is statistically significant, but the coefficent for share of adults with any primary schooling is not statistically significant. Thus, we can conclude that there exists only causal evidence that migration has had a positive effect on the average years of schooling attained, but not the share of adults with any primary schooling. 
+<br>
+$\alpha_2$: This is the coefficient on LateTreated. Within our regression, this represents the difference between the late treatment cohorts and the pre treatment cohorts in districts that don't have a Wenela station. This represents the effect across cohorts in the control group. For average years of schooling, the coefficient is 1.78, while for the share of adults with primary schooling the coefficient is 0.244. Both coefficients are statistically significant. 
+<br>
+$\alpha_3$: This is the coefficient on AnyWenela. Thus, it represents the difference between districts that have a Wenela station and districts that don't have a Wenela station for the pre treatment cohorts, that is it represents the differences between the districts before the treatment takes place. For average years of schooling, the coefficient is 0.149, while for the share of adults with primary schooling the coefficient is 0.038. However, both coefficients are not statically significant, meaning that there is no statistical evidence of a difference in education between the districts. 
+<br>  
+
+**c. External validity**
+<br>
+
+The external validity of our results are somewhat limited. We have exclusively looked at data that concerns the migration from Malawi to South African mines. Furthermore, the migration depended on the existence of Wenela stations in certain districts, thus, migration was tied to policy and policy changes. For example, Malawi's have a very low  education level (around 2.5 years on average), meaning the effect of an extra income on education might be larger her than in a country with already higher education levels. It is therefore hard to apply our findings to migration in a more general context, as whether migration affects education may be different the very specific circumstances of the data that we studied. 
+
